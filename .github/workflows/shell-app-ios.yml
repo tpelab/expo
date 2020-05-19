@@ -1,0 +1,66 @@
+name: iOS Shell App
+
+on:
+  repository_dispatch:
+    types: [ shell-ios-release ]
+  schedule:
+    cron: '20 5 * * 2,4,6'
+  push:
+    # branches: [ master ]
+    paths:
+      - .github/workflows/shell-app.yml
+      - package.json
+      - exponent-view-template
+      - tools-public/**
+      - ios/**
+
+jobs:
+  build:
+    runs-on: macos-10.15
+    steps:
+      - uses: actions/checkout@v2
+        with:
+          lfs: true
+          submodules: true
+      - run: yarn install --frozen-lockfile
+        working-directory: tools-public
+      - run: bin/expotools ios-generate-dynamic-macros
+      - name: Set up Ruby 2.6.3
+        uses: actions/setup-ruby@v1
+        with:
+          ruby-version: 2.6.3
+      - name: install fastlane
+        run: bundle install
+      - name: echo "--run.cwd project/tools-public" >> ~/.yarnrc
+      - name: npm install gulp-cli -g
+      - name: Build iOS shell app for real devices
+        working-directory: tools-public
+        timeout-minutes: 30
+        run: gulp ios-shell-app --action build --type archive --verbose true --skipRepoUpdate --shellAppSdkVersion UNVERSIONED
+      - name: Build iOS shell app for simulators
+        working-directory: tools-public
+        timeout-minutes: 30
+        run: gulp ios-shell-app --action build --type archive --verbose true --skipRepoUpdate --shellAppSdkVersion UNVERSIONED
+      - run: brew install awscli
+      - name: set tarball name
+        id: tarball
+        run: echo "::set-output name=filename::ios-shell-builder-sdk-latest-${{ github.sha }}"
+      - name: Package release tarball
+        if: github.event.action == "shell-ios-release"
+        timeout-minutes: 40
+        command: |
+          tar \
+            -zcf "/tmp/${{ steps.tarball.outputs.filename }}" \
+            package.json \
+            exponent-view-template \
+            shellAppBase-builds \
+            shellAppWorkspaces \
+            ios
+      - name: upload tarball trigger
+        if: github.event.action == "shell-ios-release"
+        timeout-minutes: 40
+        run: |
+          aws s3 cp --acl public-read "/tmp/${{ steps.tarball.outputs.filename }}" s3://exp-artifacts
+          echo "Release tarball uploaded to s3://exp-artifacts/${{ steps.tarball.outputs.filename }}"
+          echo "You can deploy this by updating or creating a new file in https://github.com/expo/turtle/tree/master/shellTarballs/ios"
+          echo "Then follow the deployment instructions: https://github.com/expo/turtle-deploy"
